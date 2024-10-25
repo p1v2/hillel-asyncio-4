@@ -4,9 +4,18 @@ from asyncio import sleep as async_sleep, Lock, Queue, Semaphore
 
 
 class Pizza:
-    def __init__(self, pizza):
+    PIZZA_TYPES = {
+        "Margherita": {"make": 2, "bake": 3, "pack": 1},
+        "Pepperoni": {"make": 3, "bake": 4, "pack": 2},
+        "Veggie": {"make": 4, "bake": 5, "pack": 2}
+    }
+    
+    def __init__(self, pizza, type='Pepperoni', priority='Normal'):
         self.pizza = pizza
+        self.type = type
+        self.priority = priority
         self.status = 'in_fridge'
+        self.preparation_times = Pizza.PIZZA_TYPES[type]
     
     STATUSES = (
         'in_fridge',
@@ -35,10 +44,20 @@ class PizzaMaker:
     async def get_ingredients_from_fridge(self, pizza):
         await self.make_busy(1, pizza)
         pizza.status = 'to_make'
-        await make_queue.put(pizza)
+        if pizza.priority == "Urgent":
+            make_queue._queue.appendleft(pizza)
+        else:
+            await make_queue.put(pizza)
 
     async def make_pizza(self, pizza):
-        await self.make_busy(2, pizza)
+        await self.make_busy(pizza.preparation_times['make'], pizza)
+        pizza.status = 'made'
+        await put_into_oven_queue.put(pizza)
+        
+    async def make_certain_pizza(self, pizza):
+        if pizza.type not in self.specialties:
+            return 'Specialist cannot make this pizza type'
+        await self.make_busy(pizza.preparation_times["make"], pizza)
         pizza.status = 'made'
         await put_into_oven_queue.put(pizza)
 
@@ -87,7 +106,17 @@ class PizzaMaker:
                 self.active_pizza = None
                 await async_sleep(1)
 
+class PizzaSpecialist(PizzaMaker):
+    def __init__(self, number, specialties):
+        super().__init__(number)
+        self.specialties = specialties
 
+    async def make_pizza(self, pizza):
+        if pizza.type not in self.specialties:
+            print(f"Specialist {self.number} cannot make {pizza.type}.")
+            return
+        await super().make_pizza(pizza)
+        
 class Oven:
     def __init__(self):
         self.lock = Lock()
@@ -121,10 +150,12 @@ async def console_job(pizzas, workers):
             active_worker = next((worker for worker in workers if worker.active_pizza == pizza), None)
             status_order = Pizza.STATUSES.index(pizza.status)
 
-            print(f'Pizza {pizza.pizza}: {"*" * status_order}{"-" * (len(Pizza.STATUSES) - status_order - 1)}', end='')
+            print(f'Pizza {pizza.pizza}: Priority: {pizza.priority}, type: {pizza.type}, {"*" * status_order}{"-" * (len(Pizza.STATUSES) - status_order - 1)}', end='')
             print(f' ({pizza.status})', end='')
             if active_worker:
-                print(f' ({active_worker.number})', end='')
+                role = "Specialist" if isinstance(active_worker, PizzaSpecialist) else "Worker"
+                specialties = f"(Specialty: {', '.join(active_worker.specialties)})" if role == "Specialist" else ""
+                print(f' ({role} {active_worker.number} {specialties})', end='')
             print()
         print()
         await async_sleep(1)
