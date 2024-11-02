@@ -1,13 +1,26 @@
 import asyncio
+import random
 
 from asyncio import sleep as async_sleep, Lock, Queue, Semaphore
 
 
 class Pizza:
-    def __init__(self, pizza):
+    def __init__(self, pizza, pizza_type):
         self.pizza = pizza
+        self.type = pizza_type
         self.status = 'in_fridge'
-    
+
+    TYPES_OF_PIZZAS = {
+        'Margherita': {'make': 1, 'bake': 3, 'pack': 1},
+        'Pepperoni': {'make': 2, 'bake': 4, 'pack': 2},
+        'Veggie': {'make': 1, 'bake': 3.5, 'pack': 1.5},
+        'Hawaiian': {'make': 1.5, 'bake': 3, 'pack': 1},
+        'BBQ Chicken': {'make': 2.5, 'bake': 4.5, 'pack': 2.5},
+        'Meat Lovers': {'make': 3, 'bake': 5, 'pack': 2},
+        'Supreme': {'make': 2, 'bake': 4.5, 'pack': 2},
+        'Four Cheese': {'make': 1.5, 'bake': 3.5, 'pack': 1}
+    }
+
     STATUSES = (
         'in_fridge',
         'to_make',
@@ -26,41 +39,42 @@ class PizzaMaker:
         self.active_pizza = None
         self.number = number
 
-    async def make_busy(self, seconds, pizza):
+    async def make_busy(self, stage, pizza):
+        seconds = Pizza.TYPES_OF_PIZZAS[pizza.type][stage]
         await self.lock.acquire()
         self.active_pizza = pizza
         await async_sleep(seconds)
         self.lock.release()
 
     async def get_ingredients_from_fridge(self, pizza):
-        await self.make_busy(1, pizza)
+        await self.make_busy('make', pizza)
         pizza.status = 'to_make'
         await make_queue.put(pizza)
 
     async def make_pizza(self, pizza):
-        await self.make_busy(2, pizza)
+        await self.make_busy('make', pizza)
         pizza.status = 'made'
         await put_into_oven_queue.put(pizza)
 
     async def put_into_oven(self, pizza, ovens_semaphore):
         await ovens_semaphore.acquire()
-        await self.make_busy(1, pizza)
+        await self.make_busy('bake', pizza)
         pizza.status = 'in_oven'
         await oven_queue.put(pizza)
 
     async def take_out_of_oven(self, pizza, ovens_semaphore):
-        await self.make_busy(1, pizza)
+        await self.make_busy('bake', pizza)
         ovens_semaphore.release()
         pizza.status = 'to_pack'
         await pack_queue.put(pizza)
 
     async def pack_pizza(self, pizza):
-        await self.make_busy(1, pizza)
+        await self.make_busy('pack', pizza)
         pizza.status = 'to_deliver'
         await deliver_queue.put(pizza)
 
     async def deliver_pizza(self, pizza):
-        await self.make_busy(1, pizza)
+        await self.make_busy('pack', pizza)
         pizza.status = 'delivered'
 
     async def do_the_job(self, ovens_semaphore):
@@ -121,7 +135,9 @@ async def console_job(pizzas, workers):
             active_worker = next((worker for worker in workers if worker.active_pizza == pizza), None)
             status_order = Pizza.STATUSES.index(pizza.status)
 
-            print(f'Pizza {pizza.pizza}: {"*" * status_order}{"-" * (len(Pizza.STATUSES) - status_order - 1)}', end='')
+            print(
+                f'Pizza {pizza.pizza} ({pizza.type}): {"*" * status_order}{"-" * (len(Pizza.STATUSES) - status_order - 1)}',
+                end='')
             print(f' ({pizza.status})', end='')
             if active_worker:
                 print(f' ({active_worker.number})', end='')
@@ -138,12 +154,13 @@ async def main():
 
     ovens = [Oven() for _ in range(ovens_amount)]
     ovens_semaphore = Semaphore(ovens_amount)
-    workers = [PizzaMaker(i+1) for i in range(workers_amount)]
+    workers = [PizzaMaker(i + 1) for i in range(workers_amount)]
 
     worker_tasks = [asyncio.create_task(worker.do_the_job(ovens_semaphore)) for worker in workers]
     oven_tasks = [asyncio.create_task(oven.do_the_job()) for oven in ovens]
 
-    pizzas = [Pizza(i+1) for i in range(pizza_amount)]
+    pizza_types = list(Pizza.TYPES_OF_PIZZAS.keys())
+    pizzas = [Pizza(i + 1, random.choice(pizza_types)) for i in range(pizza_amount)]
 
     fridge_tasks = [fridge_queue.put(pizza) for pizza in pizzas]
 
