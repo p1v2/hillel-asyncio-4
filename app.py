@@ -4,10 +4,35 @@ import random
 from asyncio import sleep as async_sleep, Lock, Queue, Semaphore
 
 
+class PriorityQueue:
+    def __init__(self):
+        self.urgent_queue = Queue()
+        self.normal_queue = Queue()
+
+    async def put(self, pizza):
+        if pizza.priority == "Urgent":
+            await self.urgent_queue.put(pizza)
+        else:
+            await self.normal_queue.put(pizza)
+
+    async def get(self):
+        if not self.urgent_queue.empty():
+            return await self.urgent_queue.get()
+        return await self.normal_queue.get()
+
+    def empty(self):
+        return self.urgent_queue.empty() and self.normal_queue.empty()
+
+    async def join(self):
+        await self.urgent_queue.join()
+        await self.normal_queue.join()
+
+
 class Pizza:
-    def __init__(self, pizza, pizza_type):
+    def __init__(self, pizza, pizza_type, priority="Normal"):
         self.pizza = pizza
         self.type = pizza_type
+        self.priority = priority
         self.status = 'in_fridge'
 
     TYPES_OF_PIZZAS = {
@@ -18,7 +43,15 @@ class Pizza:
         'BBQ Chicken': {'make': 2.5, 'bake': 4.5, 'pack': 2.5},
         'Meat Lovers': {'make': 3, 'bake': 5, 'pack': 2},
         'Supreme': {'make': 2, 'bake': 4.5, 'pack': 2},
-        'Four Cheese': {'make': 1.5, 'bake': 3.5, 'pack': 1}
+        'Four Cheese': {'make': 1.5, 'bake': 3.5, 'pack': 1},
+        'Buffalo Chicken': {'make': 2, 'bake': 4, 'pack': 1.5},
+        'Mushroom': {'make': 1.5, 'bake': 3, 'pack': 1},
+        'Truffle': {'make': 2.5, 'bake': 5, 'pack': 2},
+        'Seafood': {'make': 3, 'bake': 5.5, 'pack': 2.5},
+        'Pesto': {'make': 1.5, 'bake': 3.5, 'pack': 1.5},
+        'White Pizza': {'make': 2, 'bake': 4, 'pack': 1.5},
+        'Mexican': {'make': 2, 'bake': 4.5, 'pack': 2},
+        'Calzone': {'make': 2.5, 'bake': 4.5, 'pack': 2}
     }
 
     STATUSES = (
@@ -117,14 +150,14 @@ class Oven:
                 await async_sleep(0.1)
 
 
-fridge_queue = Queue()
-make_queue = Queue()
-put_into_oven_queue = Queue()
-take_out_of_oven_queue = Queue()
-pack_queue = Queue()
-deliver_queue = Queue()
+fridge_queue = PriorityQueue()
+make_queue = PriorityQueue()
+put_into_oven_queue = PriorityQueue()
+take_out_of_oven_queue = PriorityQueue()
+pack_queue = PriorityQueue()
+deliver_queue = PriorityQueue()
 
-oven_queue = Queue()
+oven_queue = PriorityQueue()
 
 
 async def console_job(pizzas, workers):
@@ -136,7 +169,7 @@ async def console_job(pizzas, workers):
             status_order = Pizza.STATUSES.index(pizza.status)
 
             print(
-                f'Pizza {pizza.pizza} ({pizza.type}): {"*" * status_order}{"-" * (len(Pizza.STATUSES) - status_order - 1)}',
+                f'Pizza {pizza.pizza} ({pizza.type}, {pizza.priority}): {"*" * status_order}{"-" * (len(Pizza.STATUSES) - status_order - 1)}',
                 end='')
             print(f' ({pizza.status})', end='')
             if active_worker:
@@ -160,7 +193,8 @@ async def main():
     oven_tasks = [asyncio.create_task(oven.do_the_job()) for oven in ovens]
 
     pizza_types = list(Pizza.TYPES_OF_PIZZAS.keys())
-    pizzas = [Pizza(i + 1, random.choice(pizza_types)) for i in range(pizza_amount)]
+    priority_levels = ["Normal", "Urgent"]
+    pizzas = [Pizza(i + 1, random.choice(pizza_types), random.choice(priority_levels)) for i in range(pizza_amount)]
 
     fridge_tasks = [fridge_queue.put(pizza) for pizza in pizzas]
 
