@@ -36,22 +36,22 @@ class Pizza:
         self.status = 'in_fridge'
 
     TYPES_OF_PIZZAS = {
-        'Margherita': {'make': 1, 'bake': 3, 'pack': 1},
+        'Margherita': {'make': 3, 'bake': 3, 'pack': 1},
         'Pepperoni': {'make': 2, 'bake': 4, 'pack': 2},
-        'Veggie': {'make': 1, 'bake': 3.5, 'pack': 1.5},
-        'Hawaiian': {'make': 1.5, 'bake': 3, 'pack': 1},
-        'BBQ Chicken': {'make': 2.5, 'bake': 4.5, 'pack': 2.5},
-        'Meat Lovers': {'make': 3, 'bake': 5, 'pack': 2},
-        'Supreme': {'make': 2, 'bake': 4.5, 'pack': 2},
-        'Four Cheese': {'make': 1.5, 'bake': 3.5, 'pack': 1},
-        'Buffalo Chicken': {'make': 2, 'bake': 4, 'pack': 1.5},
-        'Mushroom': {'make': 1.5, 'bake': 3, 'pack': 1},
-        'Truffle': {'make': 2.5, 'bake': 5, 'pack': 2},
-        'Seafood': {'make': 3, 'bake': 5.5, 'pack': 2.5},
-        'Pesto': {'make': 1.5, 'bake': 3.5, 'pack': 1.5},
-        'White Pizza': {'make': 2, 'bake': 4, 'pack': 1.5},
-        'Mexican': {'make': 2, 'bake': 4.5, 'pack': 2},
-        'Calzone': {'make': 2.5, 'bake': 4.5, 'pack': 2}
+        'Veggie': {'make': 6, 'bake': 3.5, 'pack': 1.5},
+        'Hawaiian': {'make': 5, 'bake': 3, 'pack': 1},
+        'BBQ Chicken': {'make': 3, 'bake': 4.5, 'pack': 2.5},
+        'Meat Lovers': {'make': 2, 'bake': 5, 'pack': 2},
+        'Supreme': {'make': 6, 'bake': 4.5, 'pack': 2},
+        'Four Cheese': {'make': 10, 'bake': 3.5, 'pack': 1},
+        'Buffalo Chicken': {'make': 3, 'bake': 4, 'pack': 1.5},
+        'Mushroom': {'make': 2, 'bake': 3, 'pack': 1},
+        'Truffle': {'make': 8, 'bake': 5, 'pack': 2},
+        'Seafood': {'make': 14, 'bake': 5.5, 'pack': 2.5},
+        'Pesto': {'make': 3, 'bake': 3.5, 'pack': 1.5},
+        'White Pizza': {'make': 8, 'bake': 4, 'pack': 1.5},
+        'Mexican': {'make': 6, 'bake': 4.5, 'pack': 2},
+        'Calzone': {'make': 5, 'bake': 4.5, 'pack': 2}
     }
 
     STATUSES = (
@@ -78,6 +78,9 @@ class PizzaMaker:
         self.active_pizza = pizza
         await async_sleep(seconds)
         self.lock.release()
+
+    def can_make(self, pizza):
+        return True
 
     async def get_ingredients_from_fridge(self, pizza):
         await self.make_busy('make', pizza)
@@ -126,13 +129,30 @@ class PizzaMaker:
                 await self.put_into_oven(pizza, ovens_semaphore)
             elif not make_queue.empty():
                 pizza = await make_queue.get()
+                if not self.can_make(pizza):
+                    await make_queue.put(pizza)
+                    await async_sleep(0.1)
+                    continue
                 await self.make_pizza(pizza)
             elif not fridge_queue.empty():
                 pizza = await fridge_queue.get()
+                if not self.can_make(pizza):
+                    await fridge_queue.put(pizza)
+                    await async_sleep(0.1)
+                    continue
                 await self.get_ingredients_from_fridge(pizza)
             else:
                 self.active_pizza = None
                 await async_sleep(1)
+
+
+class PizzaSpecialist(PizzaMaker):
+    def __init__(self, number, specialties):
+        super().__init__(number)
+        self.specialties = specialties
+
+    def can_make(self, pizza):
+        return pizza.type in self.specialties
 
 
 class Oven:
@@ -173,7 +193,11 @@ async def console_job(pizzas, workers):
                 end='')
             print(f' ({pizza.status})', end='')
             if active_worker:
-                print(f' ({active_worker.number})', end='')
+                if isinstance(active_worker, PizzaSpecialist):
+                    specialties = ', '.join(active_worker.specialties)
+                    print(f' (Worker {active_worker.number} - Specialist: {specialties})', end='')
+                else:
+                    print(f' (Worker {active_worker.number})', end='')
             print()
         print()
         await async_sleep(1)
@@ -184,15 +208,25 @@ async def main():
     workers_amount = int(input('Enter the amount of workers: '))
     pizza_amount = int(input('Enter the amount of pizzas: '))
     ovens_amount = int(input('Enter the amount of ovens: '))
+    pizza_types = list(Pizza.TYPES_OF_PIZZAS.keys())
+
+    if workers_amount > 1:
+        specialists_amount = random.randint(workers_amount // 3, workers_amount - 1)
+    else:
+        specialists_amount = 0
+
+    workers = [PizzaMaker(i + 1) for i in range(workers_amount - specialists_amount)]
+
+    for i in range(specialists_amount):
+        specialties = random.sample(pizza_types, k=2)
+        specialist = PizzaSpecialist(workers_amount - specialists_amount + i + 1, specialties)
+        workers.append(specialist)
 
     ovens = [Oven() for _ in range(ovens_amount)]
     ovens_semaphore = Semaphore(ovens_amount)
-    workers = [PizzaMaker(i + 1) for i in range(workers_amount)]
 
     worker_tasks = [asyncio.create_task(worker.do_the_job(ovens_semaphore)) for worker in workers]
     oven_tasks = [asyncio.create_task(oven.do_the_job()) for oven in ovens]
-
-    pizza_types = list(Pizza.TYPES_OF_PIZZAS.keys())
     priority_levels = ["Normal", "Urgent"]
     pizzas = [Pizza(i + 1, random.choice(pizza_types), random.choice(priority_levels)) for i in range(pizza_amount)]
 
